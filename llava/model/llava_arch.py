@@ -31,14 +31,16 @@ class LlavaMetaModel:
     def __init__(self, config):
         super(LlavaMetaModel, self).__init__(config)
 
-        if hasattr(config, "mm_vision_tower"):
-            self.vision_tower = build_vision_tower(config, delay_load=True)
-            self.mm_projector = build_vision_projector(config)
+        ## mm_vision_tower: [deprecated] param in llava 1.5
+        # print(f"YW_DEBUG: LlavaMetaModel init: config.mm_vision_tower = {hasattr(config, 'mm_vision_tower')}")
+        # if hasattr(config, "mm_vision_tower"):
+        #     self.vision_tower = build_vision_tower(config, delay_load=True)
+        #     self.mm_projector = build_vision_projector(config)
 
-            if 'unpad' in getattr(config, 'mm_patch_merge_type', ''):
-                self.image_newline = nn.Parameter(
-                    torch.empty(config.hidden_size, dtype=self.dtype)
-                )
+        #     if 'unpad' in getattr(config, 'mm_patch_merge_type', ''):
+        #         self.image_newline = nn.Parameter(
+        #             torch.empty(config.hidden_size, dtype=self.dtype)
+        #         )
 
     def get_vision_tower(self):
         vision_tower = getattr(self, 'vision_tower', None)
@@ -47,14 +49,15 @@ class LlavaMetaModel:
         return vision_tower
 
     def initialize_vision_modules(self, model_args, fsdp=None):
-        vision_tower = model_args.vision_tower
+        vision_tower_name = model_args.vision_tower_name
         mm_vision_select_layer = model_args.mm_vision_select_layer
         mm_vision_select_feature = model_args.mm_vision_select_feature
         pretrain_mm_mlp_adapter = model_args.pretrain_mm_mlp_adapter
         mm_patch_merge_type = model_args.mm_patch_merge_type
 
-        self.config.mm_vision_tower = vision_tower
+        self.config.vision_tower_name = vision_tower_name
 
+        print(f"YW_DEBUG: initialize_vision_modules: self.get_vision_tower()={self.get_vision_tower()}")
         if self.get_vision_tower() is None:
             vision_tower = build_vision_tower(model_args)
 
@@ -76,6 +79,7 @@ class LlavaMetaModel:
         self.config.mm_vision_select_feature = mm_vision_select_feature
         self.config.mm_patch_merge_type = mm_patch_merge_type
 
+        print(f"YW_DEBUG: initialize_vision_modules: self.mm_projector={getattr(self, 'mm_projector', None)}")
         if getattr(self, 'mm_projector', None) is None:
             self.mm_projector = build_vision_projector(self.config)
 
@@ -150,6 +154,12 @@ class LlavaMetaForCausalLM(ABC):
         if vision_tower is None or images is None or input_ids.shape[1] == 1:
             return input_ids, position_ids, attention_mask, past_key_values, None, labels
 
+        # print("YW_DEBUG: prepare_inputs_labels_for_multimodal:")
+        # print(f"YW_DEBUG: image_aspect_ratio={getattr(self.config, 'image_aspect_ratio', 'square')}, mm_patch_merge_type={getattr(self.config, 'mm_patch_merge_type', 'flat')}")
+        # print(f"YW_DEBUG: image_grid_pinpoints={self.config.image_grid_pinpoints}")
+        # print(f"YW_DEBUG: type(images)={type(images)}")
+        # print(f"YW_DEBUG: image_sizes=={image_sizes}")
+
         if type(images) is list or images.ndim == 5:
             if type(images) is list:
                 images = [x.unsqueeze(0) if x.ndim == 3 else x for x in images]
@@ -167,11 +177,14 @@ class LlavaMetaForCausalLM(ABC):
                     if image_feature.shape[0] > 1:
                         base_image_feature = image_feature[0]
                         image_feature = image_feature[1:]
+                        # print(f"YW_DEBUG: spatial: base_image_feature: {base_image_feature.size()}, image_feature={image_feature.size()}")
+
                         height = width = self.get_vision_tower().num_patches_per_side
                         assert height * width == base_image_feature.shape[0]
                         if image_aspect_ratio == 'anyres':
                             num_patch_width, num_patch_height = get_anyres_image_grid_shape(image_sizes[image_idx], self.config.image_grid_pinpoints, self.get_vision_tower().config.image_size)
                             image_feature = image_feature.view(num_patch_height, num_patch_width, height, width, -1)
+                            # print(f"YW_DEBUG: anyres: image_feature size={image_feature.size()}")
                         else:
                             raise NotImplementedError
                         if 'unpad' in mm_patch_merge_type:
@@ -183,6 +196,8 @@ class LlavaMetaForCausalLM(ABC):
                                 self.model.image_newline[:, None, None].expand(*image_feature.shape[:-1], 1).to(image_feature.device)
                             ), dim=-1)
                             image_feature = image_feature.flatten(1, 2).transpose(0, 1)
+                            # print(f"YW_DEBUG: unpad: image_feature size={image_feature.size()}")
+
                         else:
                             image_feature = image_feature.permute(0, 2, 1, 3, 4).contiguous()
                             image_feature = image_feature.flatten(0, 3)

@@ -33,7 +33,7 @@ from llava.train.llava_trainer import LLaVATrainer
 
 from llava import conversation as conversation_lib
 from llava.model import *
-from llava.mm_utils import tokenizer_image_token
+from llava.mm_utils import tokenizer_image_token, process_images
 
 from PIL import Image
 
@@ -56,7 +56,7 @@ class ModelArguments:
     version: Optional[str] = field(default="v0")
     freeze_backbone: bool = field(default=False)
     tune_mm_mlp_adapter: bool = field(default=False)
-    vision_tower: Optional[str] = field(default=None)
+    vision_tower_name: Optional[str] = field(default=None)
     mm_vision_select_layer: Optional[int] = field(default=-1)   # default to the last layer
     pretrain_mm_mlp_adapter: Optional[str] = field(default=None)
     mm_projector_type: Optional[str] = field(default='linear')
@@ -64,7 +64,8 @@ class ModelArguments:
     mm_use_im_patch_token: bool = field(default=True)
     mm_patch_merge_type: Optional[str] = field(default='flat')
     mm_vision_select_feature: Optional[str] = field(default="patch")
-
+    load_pt_cfg_only: Optional[str] = field(default=None)
+    load_pt_model_only: Optional[str] = field(default=None)
 
 @dataclass
 class DataArguments:
@@ -74,6 +75,14 @@ class DataArguments:
     is_multimodal: bool = False
     image_folder: Optional[str] = field(default=None)
     image_aspect_ratio: str = 'square'
+    image_grid_pinpoints_str: Optional[str] = field(default=None)
+    # image_grid_pinpoints: Optional[list] = field(default=[])
+    # vision_tower_size: int = field(
+    #     default=336,
+    #     metadata={
+    #         "help": "vision tower image size"
+    #     },
+    # )
 
 
 @dataclass
@@ -699,23 +708,19 @@ class LazySupervisedDataset(Dataset):
             image_folder = self.data_args.image_folder
             processor = self.data_args.image_processor
             image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
-            if self.data_args.image_aspect_ratio == 'pad':
-                def expand2square(pil_img, background_color):
-                    width, height = pil_img.size
-                    if width == height:
-                        return pil_img
-                    elif width > height:
-                        result = Image.new(pil_img.mode, (width, width), background_color)
-                        result.paste(pil_img, (0, (width - height) // 2))
-                        return result
-                    else:
-                        result = Image.new(pil_img.mode, (height, height), background_color)
-                        result.paste(pil_img, ((height - width) // 2, 0))
-                        return result
-                image = expand2square(image, tuple(int(x*255) for x in processor.image_mean))
-                image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
-            else:
-                image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+            image_size = image.size
+            # if self.data_args.image_aspect_ratio == 'pad':
+            #     image = expand2square(image, tuple(int(x*255) for x in processor.image_mean))
+            #     image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+            # ## add codes to support v1.6
+            # elif self.data_args.image_aspect_ratio == 'anyres':
+            #     batch_images = get_anyres_batch_images(image, self.data_args.image_grid_pinpoints, self.data_args.vision_tower_size)
+            #     image = processor.preprocess(batch_images, return_tensors='pt')['pixel_values']
+            #     # print(f"YW_DEBUG: lazy datsaset, image_aspect_ratio='anyres', input.size()={image.size()}")
+            # else:
+            #     image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+            image = process_images([image], processor, self.data_args)[0]
+            # print(f"LazySupervisedDataset: processed_image size={image.size()}")
             sources = preprocess_multimodal(
                 copy.deepcopy([e["conversations"] for e in sources]),
                 self.data_args)
@@ -732,10 +737,12 @@ class LazySupervisedDataset(Dataset):
         # image exist in the data
         if 'image' in self.list_data_dict[i]:
             data_dict['image'] = image
+            data_dict['image_size'] = image_size
         elif self.data_args.is_multimodal:
             # image does not exist in the data, but the model is multimodal
             crop_size = self.data_args.image_processor.crop_size
             data_dict['image'] = torch.zeros(3, crop_size['height'], crop_size['width'])
+            data_dict['image_size'] = (crop_size['width'], crop_size['height'])
         return data_dict
 
 
@@ -770,6 +777,8 @@ class DataCollatorForSupervisedDataset(object):
             else:
                 batch['images'] = images
 
+            batch['image_sizes'] = [instance['image_size'] for instance in instances]
+
         return batch
 
 
@@ -785,6 +794,27 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,
                 data_collator=data_collator)
 
 
+def init_img_grid_pinpoints(data_args):
+    # init image_grid_pinpoints:
+    # str = "[[336, 672], [672, 336], [672, 672], [1008, 336], [336, 1008]]" or
+    # str = "336, 672, 672, 336, 672, 672, 1008, 336, 336, 1008"
+    img_grid_list = []
+    if getattr(data_args, 'image_grid_pinpoints_str', None):
+        pair = []
+        for p in data_args.image_grid_pinpoints_str.split(','):
+            p = p.strip()
+            if p[0] == '[' or len(pair) == 0:
+                w = int(p.lstrip('['))
+                pair.append(w)
+            elif p[-1] == ']' or len(pair) == 1:
+                h = int(p.rstrip(']'))
+                pair.append(h)
+                img_grid_list.append(pair)
+                pair = []
+    print(f"YW_DEBUG: init img_grid_list={img_grid_list}")
+    data_args.image_grid_pinpoints = img_grid_list  
+
+
 def train(attn_implementation=None):
     global local_rank
 
@@ -793,6 +823,9 @@ def train(attn_implementation=None):
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     local_rank = training_args.local_rank
     compute_dtype = (torch.float16 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32))
+
+    # initialize image_grid_pinpoints for llava 1.6
+    init_img_grid_pinpoints(data_args)
 
     bnb_model_from_pretrained_args = {}
     if training_args.bits in [4, 8]:
@@ -813,7 +846,7 @@ def train(attn_implementation=None):
             )
         ))
 
-    if model_args.vision_tower is not None:
+    if model_args.vision_tower_name is not None:
         if 'mpt' in model_args.model_name_or_path:
             config = transformers.AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
             config.attn_config['attn_impl'] = training_args.mpt_attn_impl
@@ -824,13 +857,41 @@ def train(attn_implementation=None):
                 **bnb_model_from_pretrained_args
             )
         else:
-            model = LlavaLlamaForCausalLM.from_pretrained(
-                model_args.model_name_or_path,
-                cache_dir=training_args.cache_dir,
-                attn_implementation=attn_implementation,
-                torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
-                **bnb_model_from_pretrained_args
-            )
+            print(f"load_pt_cfg_only={model_args.load_pt_cfg_only}")
+            print(f"load_pt_model_only={model_args.load_pt_model_only}")
+            if model_args.load_pt_cfg_only:
+                print(f"LOAD ONLY CONFIG, from: {model_args.load_pt_cfg_only}")
+                config = LlavaConfig.from_pretrained(model_args.load_pt_cfg_only)
+                # config = transformers.AutoConfig.from_pretrained(model_args.load_pt_cfg_only, trust_remote_code=True)
+                if model_args.load_pt_model_only:
+                    print(f"LOAD ONLY MODEL WEIGHTS, from: {model_args.load_pt_model_only}")
+
+                    model = LlavaLlamaForCausalLM.from_pretrained(
+                        model_args.load_pt_model_only,
+                        config=config,
+                        cache_dir=training_args.cache_dir,
+                        attn_implementation=attn_implementation,
+                        torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+                        **bnb_model_from_pretrained_args
+                    )
+                else:
+                    # init random weights
+                    print(f"RANDOM INIT MODEL WEIGHTS!!")
+                    model = LlavaLlamaForCausalLM._from_config(
+                        config,
+                        cache_dir=training_args.cache_dir,
+                        attn_implementation=attn_implementation,
+                        torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+                        **bnb_model_from_pretrained_args
+                    )
+            else:
+                model = LlavaLlamaForCausalLM.from_pretrained(
+                    model_args.model_name_or_path,
+                    cache_dir=training_args.cache_dir,
+                    attn_implementation=attn_implementation,
+                    torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+                    **bnb_model_from_pretrained_args
+                )
     else:
         model = transformers.LlamaForCausalLM.from_pretrained(
             model_args.model_name_or_path,
@@ -883,8 +944,12 @@ def train(attn_implementation=None):
             padding_side="right"
         )
     else:
+        token_cfg_dir = model_args.load_pt_cfg_only if model_args.load_pt_cfg_only is not None \
+            else model_args.model_name_or_path
+        print(f"TOKEN_CFG_DIR={token_cfg_dir}")
+
         tokenizer = transformers.AutoTokenizer.from_pretrained(
-            model_args.model_name_or_path,
+            token_cfg_dir,
             cache_dir=training_args.cache_dir,
             model_max_length=training_args.model_max_length,
             padding_side="right",
@@ -907,7 +972,7 @@ def train(attn_implementation=None):
         else:
             conversation_lib.default_conversation = conversation_lib.conv_templates["vicuna_v1"]
 
-    if model_args.vision_tower is not None:
+    if model_args.vision_tower_name is not None:
         model.get_model().initialize_vision_modules(
             model_args=model_args,
             fsdp=training_args.fsdp
@@ -917,9 +982,12 @@ def train(attn_implementation=None):
         vision_tower.to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device)
 
         data_args.image_processor = vision_tower.image_processor
+        # data_args.vision_tower_size = vision_tower.config.image_size
         data_args.is_multimodal = True
 
         model.config.image_aspect_ratio = data_args.image_aspect_ratio
+        model.config.image_grid_pinpoints = data_args.image_grid_pinpoints          
+
         model.config.tokenizer_padding_side = tokenizer.padding_side
         model.config.tokenizer_model_max_length = tokenizer.model_max_length
 

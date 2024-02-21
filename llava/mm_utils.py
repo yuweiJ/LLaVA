@@ -9,6 +9,7 @@ from transformers import StoppingCriteria
 from llava.constants import IMAGE_TOKEN_INDEX
 
 
+
 def select_best_resolution(original_size, possible_resolutions):
     """
     Selects the best resolution from a list of possible resolutions based on the original size.
@@ -114,6 +115,20 @@ def get_anyres_image_grid_shape(image_size, grid_pinpoints, patch_size):
         possible_resolutions = ast.literal_eval(grid_pinpoints)
     width, height = select_best_resolution(image_size, possible_resolutions)
     return width // patch_size, height // patch_size
+
+
+# def get_anyres_batch_images(image, img_grid_pinpoints, vision_tower_size):
+#     batch_images = [image]
+#     num_patches_width, num_patches_height = get_anyres_image_grid_shape(image.size, img_grid_pinpoints, vision_tower_size)
+#     img_w, img_h = image.size
+#     new_w = img_w // num_patches_width
+#     new_h = img_h // num_patches_height
+#     for j in range(num_patches_height):
+#         for i in range(num_patches_width):
+#             # width in: i*new_w:(i+1)*new_w, height in j*new_h:(j+1)*new_h
+#             tile = image.crop((i*new_w, j*new_h, (i+1)*new_w, (j+1)*new_h))
+#             batch_images.append(tile)
+#     return batch_images
 
 
 def process_anyres_image(image, processor, grid_pinpoints):

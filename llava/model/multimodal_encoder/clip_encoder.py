@@ -5,12 +5,12 @@ from transformers import CLIPVisionModel, CLIPImageProcessor, CLIPVisionConfig
 
 
 class CLIPVisionTower(nn.Module):
-    def __init__(self, vision_tower, args, delay_load=False):
+    def __init__(self, vision_tower_name, args, delay_load=False):
         super().__init__()
 
         self.is_loaded = False
 
-        self.vision_tower_name = vision_tower
+        self.vision_tower_name = vision_tower_name
         self.select_layer = args.mm_vision_select_layer
         self.select_feature = getattr(args, 'mm_vision_select_feature', 'patch')
 
