@@ -12,9 +12,9 @@ def simple_infer(args):
     # model_path = os.path.expanduser(args.model_path)
     model_name = get_model_name_from_path(args.model_path)
     print(f"model_name={model_name}")
-    # tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path,
-                                                                        #    args.model_base,
-                                                                        #    model_name)
+    tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path,
+                                                                           args.model_base,
+                                                                           model_name)
     # tokenizer = AutoTokenizer.from_pretrained(args.model_path, use_fast=False)
     # model = AutoModelForCausalLM.from_pretrained(args.model_path,
     #     torch_dtype=torch.float16).cuda()

@@ -64,7 +64,8 @@ class ModelArguments:
     mm_use_im_patch_token: bool = field(default=True)
     mm_patch_merge_type: Optional[str] = field(default='flat')
     mm_vision_select_feature: Optional[str] = field(default="patch")
-
+    load_pt_cfg_only: Optional[str] = field(default=None)
+    load_pt_model_only: Optional[str] = field(default=None)
 
 @dataclass
 class DataArguments:
@@ -824,13 +825,41 @@ def train(attn_implementation=None):
                 **bnb_model_from_pretrained_args
             )
         else:
-            model = LlavaLlamaForCausalLM.from_pretrained(
-                model_args.model_name_or_path,
-                cache_dir=training_args.cache_dir,
-                attn_implementation=attn_implementation,
-                torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
-                **bnb_model_from_pretrained_args
-            )
+            print(f"load_pt_cfg_only={model_args.load_pt_cfg_only}")
+            print(f"load_pt_model_only={model_args.load_pt_model_only}")
+            if model_args.load_pt_cfg_only:
+                print(f"LOAD ONLY CONFIG, from: {model_args.load_pt_cfg_only}")
+                # config = transformers.AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
+                config = LlavaConfig.from_pretrained(model_args.load_pt_cfg_only)
+                if model_args.load_pt_model_only:
+                    print(f"LOAD ONLY MODEL WEIGHTS, from: {model_args.load_pt_model_only}")
+
+                    model = LlavaLlamaForCausalLM.from_pretrained(
+                        model_args.load_pt_model_only,
+                        config=config,
+                        cache_dir=training_args.cache_dir,
+                        attn_implementation=attn_implementation,
+                        torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+                        **bnb_model_from_pretrained_args
+                    )
+                else:
+                    # init random weights
+                    print(f"RANDOM INIT MODEL WEIGHTS!!")
+                    model = LlavaLlamaForCausalLM._from_config(
+                        config,
+                        cache_dir=training_args.cache_dir,
+                        attn_implementation=attn_implementation,
+                        torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+                        **bnb_model_from_pretrained_args
+                    )
+            else:
+                model = LlavaLlamaForCausalLM.from_pretrained(
+                    model_args.model_name_or_path,
+                    cache_dir=training_args.cache_dir,
+                    attn_implementation=attn_implementation,
+                    torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+                    **bnb_model_from_pretrained_args
+                )
     else:
         model = transformers.LlamaForCausalLM.from_pretrained(
             model_args.model_name_or_path,
@@ -883,8 +912,12 @@ def train(attn_implementation=None):
             padding_side="right"
         )
     else:
+        token_cfg_dir = model_args.load_pt_cfg_only if model_args.load_pt_cfg_only is not None \
+            else model_args.model_name_or_path
+        print(f"TOKEN_CFG_DIR={token_cfg_dir}")
+
         tokenizer = transformers.AutoTokenizer.from_pretrained(
-            model_args.model_name_or_path,
+            token_cfg_dir,
             cache_dir=training_args.cache_dir,
             model_max_length=training_args.model_max_length,
             padding_side="right",
