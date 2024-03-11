@@ -13,8 +13,11 @@ def test_save_pt():
         (ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    config = LlavaConfig.from_pretrained(model_args.load_pt_cfg_only)
-    print(config)
+    config = LlavaConfig.from_pretrained(model_args.load_pt_cfg_only,
+                                         exponential_decay_length_penalty=None)
+    print(f"BEFORE TRAIN: pretrained config do_sample={config.do_sample}, temperature={config.temperature}")
+
+    # print(config)
     model = LlavaLlamaForCausalLM.from_pretrained(
         model_args.load_pt_model_only,
         config=config,
@@ -50,10 +53,14 @@ def test_save_pt():
     model.config.tokenizer_padding_side = tokenizer.padding_side
     model.config.tokenizer_model_max_length = tokenizer.model_max_length
 
+    model.config.use_cache = False
     model.config.mm_use_im_start_end = data_args.mm_use_im_start_end = model_args.mm_use_im_start_end
     training_args.use_im_start_end = model_args.mm_use_im_start_end
     model.config.mm_use_im_patch_token = model_args.mm_use_im_patch_token
-    # model.initialize_vision_tokenizer(model_args, tokenizer=tokenizer)
+    model.initialize_vision_tokenizer(model_args, tokenizer=tokenizer)
+
+    # for n, p in model.named_parameters():
+    #     print(f"name={n}, requires_grad={p.requires_grad}")
 
     data_module = make_supervised_data_module(tokenizer=tokenizer,
                                               data_args=data_args)
@@ -61,10 +68,14 @@ def test_save_pt():
                     tokenizer=tokenizer,
                     args=training_args,
                     **data_module)
-    # model.config.use_cache = True
+    trainer.train()
+    trainer.save_state()
+    print(f"AFTER TRAIN: trainer config do_sample={trainer.model.config.do_sample}, temperature={trainer.model.config.temperature}")
+
+    model.config.use_cache = True
     safe_save_model_for_hf_trainer(trainer=trainer,
                                    output_dir=training_args.output_dir)
-
+    print(f"SAVE MODEL RESULT TO: {training_args.output_dir}")
 
 
 if __name__ == "__main__":
