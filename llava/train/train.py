@@ -75,6 +75,8 @@ class DataArguments:
     is_multimodal: bool = False
     image_folder: Optional[str] = field(default=None)
     image_aspect_ratio: str = 'square'
+    image_grid_pinpoints_str: Optional[str] = field(default=None)
+    image_grid_pinpoints: Optional[list] = field(default=[])
 
 
 @dataclass
@@ -661,7 +663,8 @@ class LazySupervisedDataset(Dataset):
 
     def __init__(self, data_path: str,
                  tokenizer: transformers.PreTrainedTokenizer,
-                 data_args: DataArguments):
+                 data_args: DataArguments,
+                 vision_tower_size: int):
         super(LazySupervisedDataset, self).__init__()
         list_data_dict = json.load(open(data_path, "r"))
 
@@ -669,6 +672,7 @@ class LazySupervisedDataset(Dataset):
         self.tokenizer = tokenizer
         self.list_data_dict = list_data_dict
         self.data_args = data_args
+        self.vision_tower_size = vision_tower_size
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -715,6 +719,15 @@ class LazySupervisedDataset(Dataset):
                         return result
                 image = expand2square(image, tuple(int(x*255) for x in processor.image_mean))
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+            ## add codes to support v1.6
+            elif self.data_args.image_aspect_ratio == 'anyres':
+                # low res image: directly resize
+                base_image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+                # high res image patches
+                new_width, new_height = select_best_resolution(image.size, self.data_args.image_grid_pinpoints)
+                num_patch_width, num_patch_height = get_anyres_image_grid_shape(image_sizes[image_idx], self.data_args.image_grid_pinpoints, self.get_vision_tower().config.image_size)
+                
+
             else:
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             sources = preprocess_multimodal(
@@ -771,6 +784,8 @@ class DataCollatorForSupervisedDataset(object):
             else:
                 batch['images'] = images
 
+            batch['image_sizes'] = [instance['image'].size for instance in instances]
+
         return batch
 
 
@@ -786,6 +801,27 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,
                 data_collator=data_collator)
 
 
+def init_img_grid_pinpoints(data_args):
+    # init image_grid_pinpoints:
+    # str = "[[336, 672], [672, 336], [672, 672], [1008, 336], [336, 1008]]" or
+    # str = "336, 672, 672, 336, 672, 672, 1008, 336, 336, 1008"
+    img_grid_list = []
+    if getattr(data_args, 'image_grid_pinpoints_str', None):
+        pair = []
+        for p in data_args.image_grid_pinpoints_str.split(','):
+            p = p.strip()
+            if p[0] == '[' or len(pair) == 0:
+                w = int(p.lstrip('['))
+                pair.append(w)
+            elif p[-1] == ']' or len(pair) == 1:
+                h = int(p.rstrip(']'))
+                pair.append(h)
+                img_grid_list.append(pair)
+                pair = []
+    print(f"YW_DEBUG: init img_grid_list={img_grid_list}")
+    data_args.image_grid_pinpoints = img_grid_list  
+
+
 def train(attn_implementation=None):
     global local_rank
 
@@ -794,6 +830,9 @@ def train(attn_implementation=None):
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     local_rank = training_args.local_rank
     compute_dtype = (torch.float16 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32))
+
+    # initialize image_grid_pinpoints for llava 1.6
+    init_img_grid_pinpoints(data_args)
 
     bnb_model_from_pretrained_args = {}
     if training_args.bits in [4, 8]:
@@ -829,8 +868,8 @@ def train(attn_implementation=None):
             print(f"load_pt_model_only={model_args.load_pt_model_only}")
             if model_args.load_pt_cfg_only:
                 print(f"LOAD ONLY CONFIG, from: {model_args.load_pt_cfg_only}")
-                # config = transformers.AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
                 config = LlavaConfig.from_pretrained(model_args.load_pt_cfg_only)
+                # config = transformers.AutoConfig.from_pretrained(model_args.load_pt_cfg_only, trust_remote_code=True)
                 if model_args.load_pt_model_only:
                     print(f"LOAD ONLY MODEL WEIGHTS, from: {model_args.load_pt_model_only}")
 
@@ -950,9 +989,12 @@ def train(attn_implementation=None):
         vision_tower.to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device)
 
         data_args.image_processor = vision_tower.image_processor
+        data_args.vision_tower_size = vision_tower.config.image_size
         data_args.is_multimodal = True
 
         model.config.image_aspect_ratio = data_args.image_aspect_ratio
+        model.config.image_grid_pinpoints = data_args.image_grid_pinpoints          
+
         model.config.tokenizer_padding_side = tokenizer.padding_side
         model.config.tokenizer_model_max_length = tokenizer.model_max_length
 

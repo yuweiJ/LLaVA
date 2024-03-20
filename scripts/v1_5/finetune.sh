@@ -9,15 +9,17 @@ deepspeed llava/train/train_mem.py \
     --deepspeed ./scripts/zero3.json \
     --model_name_or_path $CKPT_DIR/lmsys/vicuna-7b-v1.5 \
     --version v1 \
-    --data_path ./playground/data/llava_v1_5_mix665k.json \
-    --image_folder ./playground/data \
+    --data_path ./playground/data/llava_v1_5_mix665k/llava_v1_5_mix665k.json \
+    --image_folder ./playground/data/llava_v1_5_mix665k \
     --vision_tower openai/clip-vit-large-patch14-336 \
     --pretrain_mm_mlp_adapter $CKPT_DIR/llava-v1.5-7b/mm_projector.bin \
     --mm_projector_type mlp2x_gelu \
     --mm_vision_select_layer -2 \
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
-    --image_aspect_ratio pad \
+    --image_aspect_ratio anyres \
+    --image_grid_pinpoints "336, 672, 672, 336, 672, 672, 1008, 336" \
+    --mm_patch_merge_type spatial_unpad \
     --group_by_modality_length True \
     --bf16 True \
     --output_dir ./checkpoints/exp/test_yw_llava-v1.5-7b_finetune \
@@ -40,3 +42,8 @@ deepspeed llava/train/train_mem.py \
     --dataloader_num_workers 4 \
     --lazy_preprocess True \
     --report_to wandb
+    # --image_grid_pinpoints "[[336, 672], [672, 336], [672, 672], [1008, 336], [336, 1008]]" \
+
+    #--model_name_or_path $CKPT_DIR/lmsys/vicuna-7b-v1.5 \
+    #--load_pt_cfg_only $CKPT_DIR/llava-v1.5-7b \
+    #--load_pt_model_only $CKPT_DIR/lmsys/vicuna-7b-v1.5 \

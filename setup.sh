@@ -6,7 +6,7 @@ eval "$($CONDA_EXEC shell.bash hook)"
 venv=llava
 venv_path=$CONDA_HOME/envs/$venv
 if ! [ -d $venv_path ]; then
-    conda create -n llava python=3.10 -y
+    conda create -n $venv python=3.10 -y
 fi
 
 conda activate $venv
@@ -17,8 +17,8 @@ pip install -e .
 pip install -e ".[train]"
 pip install flash-attn --no-build-isolation
 
-# nuscenes
-pip install nuscenes-devkit
+## nuscenes
+#pip install nuscenes-devkit
 
 # # Download checkpoints to location outside of the repo
 # mkdir -p ckpts
