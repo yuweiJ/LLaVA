@@ -15,7 +15,6 @@
 #    limitations under the License.
 
 import os
-import cv2
 import copy
 from dataclasses import dataclass, field
 import json
@@ -34,7 +33,7 @@ from llava.train.llava_trainer import LLaVATrainer
 
 from llava import conversation as conversation_lib
 from llava.model import *
-from llava.mm_utils import (tokenizer_image_token, get_anyres_image_grid_shape)
+from llava.mm_utils import (tokenizer_image_token, get_anyres_image_grid_shape, get_anyres_batch_images)
 
 from PIL import Image
 
@@ -77,7 +76,7 @@ class DataArguments:
     image_folder: Optional[str] = field(default=None)
     image_aspect_ratio: str = 'square'
     image_grid_pinpoints_str: Optional[str] = field(default=None)
-    image_grid_pinpoints: Optional[list] = field(default=[])
+    # image_grid_pinpoints: Optional[list] = field(default=[])
     vision_tower_size: int = field(
         default=336,
         metadata={
@@ -726,19 +725,9 @@ class LazySupervisedDataset(Dataset):
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             ## add codes to support v1.6
             elif self.data_args.image_aspect_ratio == 'anyres':
-                # low res image: directly resize
-                batch_images = [image]
-                # high res image: W0/336 * H0/336
-                num_patches_width, num_patches_height = get_anyres_image_grid_shape(image.size, self.data_args.image_grid_pinpoints, self.data_args.vision_tower_size)
-                img_h, img_w = image.shape[:2]
-                new_w = img_w // num_patches_width
-                new_h = img_h // num_patches_height
-                for j in range(num_patches_height):
-                    for i in range(num_patches_width):
-                        tile = image[j*new_h:(j+1)*new_h, i*new_w:(i+1)*new_w]
-                        batch_images.append(tile)
+                batch_images = get_anyres_batch_images(image)
                 image = [processor.preprocess(img, return_tensors='pt')['pixel_values'][0] for img in batch_images]
-                print(f"YW_DEBUG: lazy datsaset, image_aspect_ratio='anyres', num_patches={num_patches_width}, {num_patches_height}, len(image)={len(image)}")
+                print(f"YW_DEBUG: lazy datsaset, image_aspect_ratio='anyres', len(image)={len(image)}")
             else:
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             sources = preprocess_multimodal(
