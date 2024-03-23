@@ -708,6 +708,7 @@ class LazySupervisedDataset(Dataset):
             image_folder = self.data_args.image_folder
             processor = self.data_args.image_processor
             image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
+            image_size = image.size
             if self.data_args.image_aspect_ratio == 'pad':
                 def expand2square(pil_img, background_color):
                     width, height = pil_img.size
@@ -725,9 +726,9 @@ class LazySupervisedDataset(Dataset):
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             ## add codes to support v1.6
             elif self.data_args.image_aspect_ratio == 'anyres':
-                batch_images = get_anyres_batch_images(image)
-                image = [processor.preprocess(img, return_tensors='pt')['pixel_values'][0] for img in batch_images]
-                print(f"YW_DEBUG: lazy datsaset, image_aspect_ratio='anyres', len(image)={len(image)}")
+                batch_images = get_anyres_batch_images(image, self.data_args.image_grid_pinpoints, self.data_args.vision_tower_size)
+                image = processor.preprocess(batch_images, return_tensors='pt')['pixel_values']
+                # print(f"YW_DEBUG: lazy datsaset, image_aspect_ratio='anyres', input.size()={image.size()}")
             else:
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             sources = preprocess_multimodal(
@@ -746,6 +747,7 @@ class LazySupervisedDataset(Dataset):
         # image exist in the data
         if 'image' in self.list_data_dict[i]:
             data_dict['image'] = image
+            data_dict['image_size'] = image_size
         elif self.data_args.is_multimodal:
             # image does not exist in the data, but the model is multimodal
             crop_size = self.data_args.image_processor.crop_size
@@ -784,7 +786,7 @@ class DataCollatorForSupervisedDataset(object):
             else:
                 batch['images'] = images
 
-            batch['image_sizes'] = [instance['image'].size for instance in instances]
+            batch['image_sizes'] = [instance['image_size'] for instance in instances]
 
         return batch
 

@@ -39,7 +39,12 @@ def test_img_features():
 
     img_grid_pinpoints = [[336, 672], [672, 336], [672, 672], [1008, 336], [336, 1008]]
     batch_images = get_anyres_batch_images(image, img_grid_pinpoints, 336)
-    inputs = [image_processor.preprocess(img, return_tensors='pt')['pixel_values'][0].unsqueeze(0) for img in batch_images]
+    # inputs = [image_processor.preprocess(img, return_tensors='pt')['pixel_values'][0].unsqueeze(0) for img in batch_images]
+    inputs = image_processor.preprocess(batch_images, return_tensors='pt')['pixel_values']
+    print(f"YW_DEBUG: inputs type={type(inputs)},size={inputs.size()}")
+    import sys
+    sys.exit(0)
+    
     concat_images = torch.cat([image for image in inputs], dim=0)
     print(f"YW_DEBUG: image size before preprocess: {type(concat_images)}, {concat_images.size()}")
     # inputs = image_processor(images=image, return_tensors="pt")['pixel_values'][0]

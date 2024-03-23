@@ -150,11 +150,11 @@ class LlavaMetaForCausalLM(ABC):
         if vision_tower is None or images is None or input_ids.shape[1] == 1:
             return input_ids, position_ids, attention_mask, past_key_values, None, labels
 
-        print("YW_DEBUG: prepare_inputs_labels_for_multimodal:")
-        print(f"image_aspect_ratio={getattr(self.config, 'image_aspect_ratio', 'square')}, mm_patch_merge_type={getattr(self.config, 'mm_patch_merge_type', 'flat')}")
-        print(f"image_grid_pinpoints={self.config.image_grid_pinpoints}")
-        print(f"type(images)={type(images)}")
-        print(f"image_sizes=={image_sizes}")
+        # print("YW_DEBUG: prepare_inputs_labels_for_multimodal:")
+        # print(f"YW_DEBUG: image_aspect_ratio={getattr(self.config, 'image_aspect_ratio', 'square')}, mm_patch_merge_type={getattr(self.config, 'mm_patch_merge_type', 'flat')}")
+        # print(f"YW_DEBUG: image_grid_pinpoints={self.config.image_grid_pinpoints}")
+        # print(f"YW_DEBUG: type(images)={type(images)}")
+        # print(f"YW_DEBUG: image_sizes=={image_sizes}")
 
         if type(images) is list or images.ndim == 5:
             if type(images) is list:
@@ -173,11 +173,14 @@ class LlavaMetaForCausalLM(ABC):
                     if image_feature.shape[0] > 1:
                         base_image_feature = image_feature[0]
                         image_feature = image_feature[1:]
+                        # print(f"YW_DEBUG: spatial: base_image_feature: {base_image_feature.size()}, image_feature={image_feature.size()}")
+
                         height = width = self.get_vision_tower().num_patches_per_side
                         assert height * width == base_image_feature.shape[0]
                         if image_aspect_ratio == 'anyres':
                             num_patch_width, num_patch_height = get_anyres_image_grid_shape(image_sizes[image_idx], self.config.image_grid_pinpoints, self.get_vision_tower().config.image_size)
                             image_feature = image_feature.view(num_patch_height, num_patch_width, height, width, -1)
+                            # print(f"YW_DEBUG: anyres: image_feature size={image_feature.size()}")
                         else:
                             raise NotImplementedError
                         if 'unpad' in mm_patch_merge_type:
@@ -189,6 +192,8 @@ class LlavaMetaForCausalLM(ABC):
                                 self.model.image_newline[:, None, None].expand(*image_feature.shape[:-1], 1).to(image_feature.device)
                             ), dim=-1)
                             image_feature = image_feature.flatten(1, 2).transpose(0, 1)
+                            # print(f"YW_DEBUG: unpad: image_feature size={image_feature.size()}")
+
                         else:
                             image_feature = image_feature.permute(0, 2, 1, 3, 4).contiguous()
                             image_feature = image_feature.flatten(0, 3)
