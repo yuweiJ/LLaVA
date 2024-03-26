@@ -671,12 +671,38 @@ class LazySupervisedDataset(Dataset):
                  tokenizer: transformers.PreTrainedTokenizer,
                  data_args: DataArguments):
         super(LazySupervisedDataset, self).__init__()
-        list_data_dict = json.load(open(data_path, "r"))
 
         rank0_print("Formatting inputs...Skip in lazy mode")
         self.tokenizer = tokenizer
-        self.list_data_dict = list_data_dict
         self.data_args = data_args
+        self.load_data_list()
+
+    def load_data_list(self):
+        # supports multiple json paths and image folders
+        data_path_list = [i.strip() for i in self.data_args.data_path.split(',')]
+        data_path_list = [x for x in data_path_list if x != ""]
+
+        image_folder_list = [i.strip() for i in self.data_args.image_folder.split(',')]
+        image_folder_list = [x for x in image_folder_list if x != ""]
+
+        list_data_dict = []
+        for data_path in data_path_list:
+            assert os.path.exists(data_path), f"Dataset {data_path} does not exist!"
+            list_data = json.load(open(data_path, "r"))
+            for sample in list_data:
+                if 'image' in sample:
+                    full_img_path = None
+                    # search for image path in image_folder_list
+                    for dirname in image_folder_list:
+                        img_path = os.path.join(dirname, sample['image'])
+                        if (os.path.exists(img_path)):
+                            full_img_path = img_path
+                            break
+                    if full_img_path is None:
+                        raise ValueError(f"No valid image path for {sample['image']}")
+                    sample['image'] = full_img_path
+            list_data_dict.extend(list_data)
+        self.list_data_dict = list_data_dict
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -704,10 +730,9 @@ class LazySupervisedDataset(Dataset):
             sources = [sources]
         assert len(sources) == 1, "Don't know why it is wrapped to a list"  # FIXME
         if 'image' in sources[0]:
-            image_file = self.list_data_dict[i]['image']
-            image_folder = self.data_args.image_folder
+            image_path = self.list_data_dict[i]['image']
             processor = self.data_args.image_processor
-            image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
+            image = Image.open(image_path).convert('RGB')
             image_size = image.size
             # if self.data_args.image_aspect_ratio == 'pad':
             #     image = expand2square(image, tuple(int(x*255) for x in processor.image_mean))
