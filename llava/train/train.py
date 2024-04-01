@@ -1011,7 +1011,8 @@ def train(attn_implementation=None):
         data_args.is_multimodal = True
 
         model.config.image_aspect_ratio = data_args.image_aspect_ratio
-        model.config.image_grid_pinpoints = data_args.image_grid_pinpoints          
+        model.config.image_grid_pinpoints = data_args.image_grid_pinpoints
+        print(f"YW_DEBUG: config image_aspect_ratio={model.config.image_aspect_ratio}, mm_patch_merge_type={model.config.mm_patch_merge_type}")
 
         model.config.tokenizer_padding_side = tokenizer.padding_side
         model.config.tokenizer_model_max_length = tokenizer.model_max_length
@@ -1051,6 +1052,11 @@ def train(attn_implementation=None):
 
     data_module = make_supervised_data_module(tokenizer=tokenizer,
                                               data_args=data_args)
+    print(f"YW_DEBUG: default training_args.ddp_timeout={getattr(training_args, 'ddp_timeout', None)}")
+    # [hack] increase nccl timeout from 1800s to 1 day=86400s
+    training_args.ddp_timeout = 86400
+    print(f"YW_DEBUG: increased training_args.ddp_timeout={getattr(training_args, 'ddp_timeout', None)}")
+
     trainer = LLaVATrainer(model=model,
                     tokenizer=tokenizer,
                     args=training_args,
